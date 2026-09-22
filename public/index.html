@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>临时施工区域冲突分析台</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <header>
+    <h1>🚧 临时施工区域冲突分析台</h1>
+    <p>导入带生效时间与资源占用的 GeoJSON 区域，自动检测同时段空间冲突与共享资源冲突，并给出错峰建议</p>
+  </header>
+
+  <main>
+    <!-- 左侧面板 -->
+    <aside id="panel">
+      <section class="card">
+        <h2>1. 导入区域</h2>
+        <div class="row">
+          <input type="file" id="fileInput" accept=".geojson,.json" />
+          <button id="loadSampleBtn" type="button">加载示例</button>
+          <button id="loadIssuesSampleBtn" type="button">加载问题示例</button>
+        </div>
+        <textarea id="geojsonInput" rows="6" placeholder='粘贴 GeoJSON（FeatureCollection），要素需含 properties: {name, layer, start, end, resources?}'></textarea>
+        <div class="row">
+          <button id="precheckBtn" class="primary" type="button">质量预检</button>
+          <button id="clearBtn" class="danger" type="button">清空全部区域</button>
+        </div>
+        <p id="importMsg" class="msg"></p>
+      </section>
+
+      <section class="card">
+        <h2>2. 筛选与分析</h2>
+        <div id="layerFilters" class="layers"><em>暂无图层</em></div>
+        <div class="row">
+          <label>分析时段起 <input type="date" id="rangeStart" /></label>
+        </div>
+        <div class="row">
+          <label>分析时段止 <input type="date" id="rangeEnd" /></label>
+        </div>
+        <button id="analyzeBtn" class="primary" type="button">运行冲突分析</button>
+      </section>
+
+      <section class="card">
+        <h2>3. 已导入区域 <span id="zoneCount" class="badge">0</span></h2>
+        <ul id="zoneList" class="zone-list"></ul>
+      </section>
+
+      <section class="card">
+        <h2>4. 已保存分析</h2>
+        <div class="row">
+          <input type="text" id="analysisName" placeholder="分析名称" />
+          <button id="saveAnalysisBtn" type="button">保存当前分析</button>
+        </div>
+        <ul id="analysisList" class="analysis-list"></ul>
+      </section>
+
+      <section class="card" id="compareCard">
+        <h2>5. 分析对比</h2>
+        <p class="cluster-hint">选择两条已保存分析，按区域对匹配冲突（不依赖冲突编号），对比冲突类型、重叠起止/天数与共享资源的变化。两条分析须基于同一批区域。</p>
+        <div class="row">
+          <label>基线
+            <select id="compareBaseline"></select>
+          </label>
+        </div>
+        <div class="row">
+          <label>对照
+            <select id="compareComparison"></select>
+          </label>
+          <button id="compareBtn" class="primary" type="button">开始对比</button>
+        </div>
+        <p id="compareMsg" class="msg"></p>
+      </section>
+    </aside>
+
+    <!-- 右侧：地图 + 结果 -->
+    <section id="content">
+      <div id="map"></div>
+      <section class="card" id="clustersCard">
+        <div class="cluster-head">
+          <h2>冲突协调集群 <span id="clusterSummary" class="badge">未运行</span></h2>
+          <button id="resetClusterBtn" class="small" type="button" hidden>恢复全量视图</button>
+        </div>
+        <p class="cluster-hint">以区域为节点、冲突为无向边的连通分量；金色虚线描边的<span class="critical-legend">◆ 关键区域</span>为移除后会拆分集群的区域。点击卡片可按集群过滤冲突列表与地图。</p>
+        <div id="clusterList" class="cluster-list"><em>运行分析后在此展示协调集群（仅含两个及以上区域的连通分量）。</em></div>
+      </section>
+      <section class="card" id="resultsCard">
+        <h2>冲突结果 <span id="conflictSummary" class="badge">未运行</span></h2>
+        <div class="row">
+          <label>冲突类型筛选
+            <select id="typeFilter">
+              <option value="all">全部</option>
+              <option value="spatial">空间冲突</option>
+              <option value="resource">资源冲突</option>
+              <option value="both">空间+资源冲突</option>
+            </select>
+          </label>
+          <span id="clusterScope" class="cluster-scope" hidden></span>
+        </div>
+        <div id="conflictList" class="conflict-list"><em>运行分析后在此展示，按重叠面积降序排列。</em></div>
+      </section>
+
+      <section class="card" id="compareResultCard" hidden>
+        <div class="cluster-head">
+          <h2>分析对比结果 <span id="compareSummary" class="badge"></span></h2>
+        </div>
+        <p id="compareMeta" class="cluster-hint"></p>
+        <div class="compare-tabs" id="compareTabs">
+          <button type="button" class="compare-tab active" data-cat="all">全部 <span class="tab-count" data-count="all">0</span></button>
+          <button type="button" class="compare-tab added" data-cat="added">🆕 新增 <span class="tab-count" data-count="added">0</span></button>
+          <button type="button" class="compare-tab resolved" data-cat="resolved">✅ 已解决 <span class="tab-count" data-count="resolved">0</span></button>
+          <button type="button" class="compare-tab persistent" data-cat="persistent">🔄 持续 <span class="tab-count" data-count="persistent">0</span></button>
+          <button type="button" class="compare-tab changed" data-cat="changed">⚠ 属性变化 <span class="tab-count" data-count="changed">0</span></button>
+        </div>
+        <div id="compareList" class="compare-list"></div>
+      </section>
+    </section>
+  </main>
+
+  <!-- 质量预检结果页（弹窗） -->
+  <div id="precheckModal" class="modal" hidden>
+    <div class="modal-box">
+      <div class="modal-head">
+        <h2>质量预检结果</h2>
+        <button id="precheckCloseBtn" class="small" type="button">关闭 ✕</button>
+      </div>
+      <div id="precheckSummary" class="qc-summary"></div>
+      <div class="modal-toolbar row">
+        <label class="row" style="margin:0">
+          <input type="checkbox" id="selectAllPassed" />
+          全选可导入项（仅无错误要素）
+        </label>
+        <span style="flex:1"></span>
+        <button id="downloadNormalizedBtn" type="button">下载规范化 GeoJSON</button>
+        <button id="commitImportBtn" class="primary" type="button">导入选中项</button>
+      </div>
+      <div id="precheckReportList" class="qc-list"></div>
+    </div>
+  </div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>

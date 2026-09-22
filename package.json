@@ -1,0 +1,16 @@
+{
+  "name": "construction-zone-conflict-analyzer",
+  "version": "1.0.0",
+  "description": "临时施工区域冲突分析台：导入带生效时间的 GeoJSON 多边形，计算同时段相交区域并给出错峰建议",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "test": "node test/analysis.test.js && node test/clusters.test.js && node test/quality.test.js && node test/compare.test.js"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.19.2",
+    "polygon-clipping": "^0.15.7"
+  }
+}

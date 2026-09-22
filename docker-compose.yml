@@ -1,0 +1,22 @@
+services:
+  app:
+    build: .
+    image: construction-zone-conflict-analyzer:latest
+    ports:
+      - "3000:3000"
+    environment:
+      - PORT=3000
+      - DATA_DIR=/app/data
+    volumes:
+      - app-data:/app/data
+    restart: unless-stopped
+    # 容器健康检查（与 Dockerfile HEALTHCHECK 一致，便于 compose ps 观察状态）
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  app-data:
