@@ -116,6 +116,26 @@
         </div>
         <div id="compareList" class="compare-list"></div>
       </section>
+
+      <section class="card" id="scheduleCard" hidden>
+        <div class="cluster-head">
+          <h2>共享资源错峰排程 <span id="scheduleSummary" class="badge"></span></h2>
+          <button id="scheduleCloseBtn" class="small" type="button">关闭 ✕</button>
+        </div>
+        <p class="cluster-hint">基于已保存分析「<strong id="scheduleAnalysisName"></strong>」：选择一种共享资源并设置可用数量（默认 1），按各区域原定工期与该资源的重叠关系生成不超容量的连续安排。排程仅为建议，<strong>不会修改原区域或分析结果</strong>。</p>
+        <div class="row">
+          <label>共享资源
+            <select id="scheduleResource"></select>
+          </label>
+          <label>可用数量
+            <input type="number" id="scheduleCapacity" value="1" min="1" step="1" style="width:72px" />
+          </label>
+          <button id="scheduleRunBtn" class="primary" type="button">生成排程</button>
+          <button id="scheduleExportBtn" type="button" hidden>⬇ 导出排程 JSON</button>
+        </div>
+        <p id="scheduleMsg" class="msg"></p>
+        <div id="scheduleResult"></div>
+      </section>
     </section>
   </main>
 

@@ -6,6 +6,7 @@ const express = require('express');
 const { analyze, normalizeZone } = require('./src/analysis');
 const { precheck, extractFeatures } = require('./src/quality');
 const { compareAnalyses, ComparisonError } = require('./src/compare');
+const { buildSchedule, listScheduleResources, ScheduleError } = require('./src/schedule');
 const store = require('./src/store');
 
 const app = express();
@@ -205,6 +206,53 @@ app.post('/api/analyses/compare', (req, res) => {
         zonesOnlyInBefore: err.zonesOnlyInBefore,
         zonesOnlyInAfter: err.zonesOnlyInAfter,
       });
+    }
+    return res.status(400).json({ error: err.message });
+  }
+});
+
+// ---- 共享资源错峰排程（基于已保存分析，纯计算，不修改区域与分析结果）----
+
+// 列出一条已保存分析中可排程的共享资源（至少存在一条相关资源冲突）
+app.get('/api/analyses/:id/schedule/resources', (req, res) => {
+  const record = store.getAnalysis(req.params.id);
+  if (!record) return res.status(404).json({ error: '分析不存在' });
+  if (!record.result || !Array.isArray(record.result.conflicts)) {
+    return res.status(400).json({ error: '该分析结果数据不完整（缺少 conflicts 列表），无法排程' });
+  }
+  res.json({ resources: listScheduleResources(record.result) });
+});
+
+// 生成排程：body { resource: string, capacity?: number }（默认 1）
+app.post('/api/analyses/:id/schedule', (req, res) => {
+  const record = store.getAnalysis(req.params.id);
+  if (!record) return res.status(404).json({ error: '分析不存在' });
+  try {
+    res.json(buildSchedule(record, req.body || {}));
+  } catch (err) {
+    if (err instanceof ScheduleError) {
+      return res.status(err.status || 400).json({ error: err.message });
+    }
+    return res.status(400).json({ error: err.message });
+  }
+});
+
+// 导出排程 JSON（附件下载；服务端按参数即时生成，不落库）
+app.get('/api/analyses/:id/schedule/export', (req, res) => {
+  const record = store.getAnalysis(req.params.id);
+  if (!record) return res.status(404).json({ error: '分析不存在' });
+  const resource = req.query.resource;
+  try {
+    const capacity = req.query.capacity !== undefined ? Number(req.query.capacity) : undefined;
+    const plan = buildSchedule(record, { resource, capacity });
+    const safeName = String(resource || 'resource').replace(/[^\w一-鿿.-]+/g, '_');
+    const filename = `schedule-${record.id}-${safeName}.json`;
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`);
+    res.send(JSON.stringify(plan, null, 2));
+  } catch (err) {
+    if (err instanceof ScheduleError) {
+      return res.status(err.status || 400).json({ error: err.message });
     }
     return res.status(400).json({ error: err.message });
   }

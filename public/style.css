@@ -403,3 +403,87 @@ button.small { padding: 2px 8px; font-size: 12px; }
   line-height: 1.7;
   color: #444;
 }
+
+/* ---------- 共享资源错峰排程 ---------- */
+.schedule-btn { border-color: #b36900; color: #b36900; }
+.schedule-btn:hover { background: #fff4e0; }
+
+.sched-summary { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; font-size: 12.5px; }
+.sched-summary .qc-stat.err { background: #fde8e8; color: #b33; }
+
+.sched-timeline {
+  border: 1px solid #e3e9f0;
+  border-radius: 6px;
+  padding: 10px 12px 8px;
+  margin-bottom: 12px;
+  background: #fbfdff;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.sched-row { display: flex; align-items: center; gap: 10px; }
+.sched-row-name {
+  width: 150px;
+  flex-shrink: 0;
+  font-size: 12.5px;
+  color: #34495e;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sched-row-name.delayed { color: #a04e00; font-weight: bold; }
+.sched-delay-tag {
+  display: inline-block;
+  background: #ffe8cc;
+  color: #a04e00;
+  border-radius: 8px;
+  padding: 0 6px;
+  font-size: 11px;
+}
+.sched-track { position: relative; flex: 1; height: 20px; }
+.sched-bar {
+  position: absolute;
+  top: 3px;
+  height: 14px;
+  border-radius: 3px;
+}
+.sched-bar.original {
+  top: 0;
+  height: 20px;
+  background: #e9ecef;
+  border: 1px dashed #adb5bd;
+  opacity: 0.8;
+}
+.sched-bar.scheduled {
+  background: #1971c2;
+  border: 1px solid #0b4f8a;
+}
+.sched-bar.scheduled.delayed {
+  background: #e8590c;
+  border-color: #a04e00;
+}
+
+.sched-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.sched-table th, .sched-table td {
+  border: 1px solid #e3e9f0;
+  padding: 6px 8px;
+  text-align: left;
+  vertical-align: top;
+}
+.sched-table th { background: #f6f9fc; color: #1f3b57; font-weight: 600; }
+.sched-table .meta { color: #777; font-size: 11.5px; }
+.sched-days { text-align: center; font-weight: bold; color: #1a7f37; white-space: nowrap; }
+.sched-days.delayed { color: #e8590c; }
+.sched-cfs { display: flex; flex-wrap: wrap; gap: 4px; }
+.sched-cf {
+  display: inline-block;
+  border-radius: 3px;
+  padding: 1px 7px;
+  font-size: 11.5px;
+  border: 1px solid;
+  white-space: nowrap;
+}
+.sched-cf.is-resolved { background: #e6f4ea; border-color: #7cc496; color: #1a5f2c; }
+.sched-cf.is-remaining { background: #fff4e0; border-color: #f0ad4e; color: #8a4b00; }
+.sched-cf-state { font-weight: bold; margin-left: 2px; }
+.sched-cf-state.remaining { font-weight: normal; }

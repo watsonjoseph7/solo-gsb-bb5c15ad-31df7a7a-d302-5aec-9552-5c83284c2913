@@ -13,6 +13,12 @@ const state = {
   analyses: [],         // 已保存分析列表（对比选择器复用）
   lastComparison: null, // 最近一次分析对比结果
   compareCat: 'all',    // 对比结果分类筛选
+  schedule: {           // 共享资源错峰排程
+    analysisId: null,
+    analysisName: '',
+    resources: [],
+    plan: null,
+  },
 };
 
 // 冲突类型展示配置
@@ -668,6 +674,12 @@ async function refreshAnalyses() {
     exp.textContent = '导出';
     exp.onclick = () => { window.location.href = `/api/analyses/${a.id}/export`; };
 
+    const sched = document.createElement('button');
+    sched.className = 'small schedule-btn';
+    sched.textContent = '排程';
+    sched.title = '共享资源错峰排程：选择资源与可用数量，生成不超容量的连续安排';
+    sched.onclick = () => openSchedule(a.id, a.name);
+
     const del = document.createElement('button');
     del.className = 'danger small';
     del.textContent = '删除';
@@ -676,7 +688,7 @@ async function refreshAnalyses() {
       await refreshAnalyses();
     };
 
-    btns.append(view, exp, del);
+    btns.append(view, exp, sched, del);
     li.appendChild(btns);
     list.appendChild(li);
   }
@@ -907,6 +919,171 @@ function renderComparisonList() {
   }
 }
 
+// ---------- 共享资源错峰排程 ----------
+
+/**
+ * 打开某条已保存分析的排程面板：
+ * 先取该分析可排程的共享资源列表（存在资源冲突的资源），再按当前选择生成排程。
+ */
+async function openSchedule(analysisId, analysisName) {
+  const card = $('scheduleCard');
+  card.hidden = false;
+  card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  state.schedule = { analysisId, analysisName, resources: [], plan: null };
+  $('scheduleAnalysisName').textContent = analysisName;
+  $('scheduleResult').innerHTML = '<em>正在加载可排程资源…</em>';
+  $('scheduleSummary').textContent = '';
+  $('scheduleExportBtn').hidden = true;
+  $('scheduleMsg').textContent = '';
+  $('scheduleMsg').className = 'msg';
+
+  let resources;
+  try {
+    ({ resources } = await api(`/api/analyses/${analysisId}/schedule/resources`));
+  } catch (err) {
+    $('scheduleResult').innerHTML = '';
+    showMsg($('scheduleMsg'), err.message, false);
+    return;
+  }
+  state.schedule.resources = resources;
+
+  const sel = $('scheduleResource');
+  sel.innerHTML = '';
+  if (!resources.length) {
+    sel.innerHTML = '<option value="">（无可排程资源）</option>';
+    $('scheduleRunBtn').disabled = true;
+    $('scheduleCapacity').value = '1';
+    $('scheduleResult').innerHTML = '<em>该分析中没有与共享资源相关的冲突，无需错峰排程（空计划）。</em>';
+    return;
+  }
+  $('scheduleRunBtn').disabled = false;
+  for (const r of resources) {
+    const opt = document.createElement('option');
+    opt.value = r.resource;
+    opt.textContent = `${r.resource}（${r.conflictCount} 处冲突 · ${r.zoneCount} 个区域）`;
+    sel.appendChild(opt);
+  }
+  $('scheduleCapacity').value = '1';
+  await runSchedule();
+}
+
+async function runSchedule() {
+  const { analysisId } = state.schedule;
+  const resource = $('scheduleResource').value;
+  const capacity = Number($('scheduleCapacity').value);
+  if (!resource) return;
+  $('scheduleResult').innerHTML = '<em>正在生成排程…</em>';
+  $('scheduleExportBtn').hidden = true;
+  try {
+    const plan = await api(`/api/analyses/${analysisId}/schedule`, {
+      method: 'POST',
+      body: JSON.stringify({ resource, capacity }),
+    });
+    state.schedule.plan = plan;
+    renderSchedule(plan);
+    $('scheduleMsg').textContent = '';
+    $('scheduleMsg').className = 'msg';
+  } catch (err) {
+    state.schedule.plan = null;
+    $('scheduleResult').innerHTML = '';
+    showMsg($('scheduleMsg'), err.message, false);
+  }
+}
+
+function exportSchedule() {
+  const { analysisId } = state.schedule;
+  const resource = $('scheduleResource').value;
+  const capacity = $('scheduleCapacity').value || '1';
+  if (!analysisId || !resource) return;
+  const q = new URLSearchParams({ resource, capacity });
+  window.location.href = `/api/analyses/${analysisId}/schedule/export?${q.toString()}`;
+}
+
+const SCHED_CONFLICT_LABEL = { spatial: '空间', resource: '资源', both: '空间+资源' };
+
+function renderSchedule(plan) {
+  const box = $('scheduleResult');
+  box.innerHTML = '';
+
+  $('scheduleExportBtn').hidden = false;
+  $('scheduleSummary').textContent =
+    `资源「${plan.resource}」 · 容量 ${plan.capacity} · ${plan.zoneCount} 个区域`;
+
+  if (plan.empty) {
+    box.innerHTML = `<em>资源「${escapeHtml(plan.resource)}」在该分析中没有相关冲突，返回空计划：无需顺延任何区域。</em>`;
+    return;
+  }
+
+  const s = plan.summary;
+  const summary = document.createElement('div');
+  summary.className = 'sched-summary';
+  summary.innerHTML = `
+    <span class="qc-stat total">受影响冲突 ${s.affectedConflictCount} 处</span>
+    <span class="qc-stat pass">已解除 ${s.resolvedConflictCount} 处</span>
+    <span class="qc-stat warn">容量内保留 ${s.remainingConflictCount} 处</span>
+    <span class="qc-stat warn">顺延区域 ${s.delayedZoneCount} 个</span>
+    <span class="qc-stat err">最大延后 ${s.maxDelayDays} 天</span>
+    <span class="qc-stat">顺延合计 ${s.totalDelayDays} 天</span>`;
+  box.appendChild(summary);
+
+  // ---- 时间轴：原工期（浅色空心）+ 建议工期（实心，延后部分以橙色描边表示）----
+  const starts = plan.zones.map((z) => Date.parse(z.originalStart));
+  const ends = plan.zones.map((z) => Date.parse(z.scheduledEnd));
+  const t0 = Math.min(...starts);
+  const t1 = Math.max(...ends);
+  const span = t1 - t0 || 1;
+  const pct = (ms) => `${((ms - t0) / span) * 100}%`;
+
+  const timeline = document.createElement('div');
+  timeline.className = 'sched-timeline';
+  for (const z of plan.zones) {
+    const row = document.createElement('div');
+    row.className = 'sched-row';
+    const delayed = z.delayDays > 0;
+    row.innerHTML = `
+      <div class="sched-row-name${delayed ? ' delayed' : ''}" title="${escapeHtml(z.zoneName)}（${escapeHtml(z.layer)}）">
+        ${escapeHtml(z.zoneName)}${delayed ? ` <span class="sched-delay-tag">+${z.delayDays}天</span>` : ''}
+      </div>
+      <div class="sched-track">
+        <div class="sched-bar original" style="left:${pct(Date.parse(z.originalStart))};width:${((Date.parse(z.originalEnd) - Date.parse(z.originalStart)) / span) * 100}%"
+          title="原定：${fmtDate(z.originalStart)} ~ ${fmtDate(z.originalEnd)}（${z.durationDays} 天）"></div>
+        <div class="sched-bar scheduled${delayed ? ' delayed' : ''}" style="left:${pct(Date.parse(z.scheduledStart))};width:${((Date.parse(z.scheduledEnd) - Date.parse(z.scheduledStart)) / span) * 100}%"
+          title="建议：${fmtDate(z.scheduledStart)} ~ ${fmtDate(z.scheduledEnd)}${delayed ? `（延后 ${z.delayDays} 天）` : ''}"></div>
+      </div>`;
+    timeline.appendChild(row);
+  }
+  box.appendChild(timeline);
+
+  // ---- 逐区域明细表 ----
+  const table = document.createElement('table');
+  table.className = 'sched-table';
+  table.innerHTML = `
+    <thead><tr>
+      <th>区域</th><th>原定起止</th><th>建议起止</th><th>延后天数</th><th>受影响冲突（${s.affectedConflictCount}）</th>
+    </tr></thead>`;
+  const tbody = document.createElement('tbody');
+  for (const z of plan.zones) {
+    const tr = document.createElement('tr');
+    const chips = z.affectedConflicts.map((c) => {
+      const tip = `原重叠 ${fmtDate(c.overlapStart)} ~ ${fmtDate(c.overlapEnd)}（${c.overlapDays} 天）`;
+      const state = c.resolvedAfterSchedule
+        ? '<span class="sched-cf-state resolved">已错开</span>'
+        : `<span class="sched-cf-state remaining" title="排程后仍重叠 ${c.scheduledOverlap.days} 天（容量 ${plan.capacity} 内允许）">容量内并行</span>`;
+      return `<span class="sched-cf ${c.resolvedAfterSchedule ? 'is-resolved' : 'is-remaining'}" title="${escapeHtml(tip)}">` +
+        `${SCHED_CONFLICT_LABEL[c.conflictType] || c.conflictType} · ${escapeHtml(c.otherZone ? c.otherZone.name : '-')} ${state}</span>`;
+    }).join(' ');
+    tr.innerHTML = `
+      <td><strong>${escapeHtml(z.zoneName)}</strong><div class="meta">${escapeHtml(z.layer)}</div></td>
+      <td>${fmtDate(z.originalStart)} ~ ${fmtDate(z.originalEnd)}<div class="meta">工期 ${z.durationDays} 天</div></td>
+      <td>${fmtDate(z.scheduledStart)} ~ ${fmtDate(z.scheduledEnd)}</td>
+      <td class="${z.delayDays > 0 ? 'sched-days delayed' : 'sched-days'}">${z.delayDays > 0 ? `+${z.delayDays}` : '0'}</td>
+      <td><div class="sched-cfs">${chips || '<span class="meta">—</span>'}</div></td>`;
+    tbody.appendChild(tr);
+  }
+  table.appendChild(tbody);
+  box.appendChild(table);
+}
+
 // ---------- 事件绑定 ----------
 $('precheckBtn').onclick = () => runPrecheck($('geojsonInput').value.trim());
 
@@ -1001,6 +1178,21 @@ document.querySelectorAll('#compareTabs .compare-tab').forEach((btn) => {
     if (state.lastComparison) renderComparison(state.lastComparison);
   };
 });
+
+// 共享资源错峰排程
+$('scheduleRunBtn').onclick = runSchedule;
+$('scheduleExportBtn').onclick = exportSchedule;
+$('scheduleResource').onchange = runSchedule;
+$('scheduleCapacity').onchange = () => {
+  const el = $('scheduleCapacity');
+  const n = Number(el.value);
+  if (Number.isInteger(n) && n >= 1) runSchedule();
+  else showMsg($('scheduleMsg'), '资源可用数量必须为不小于 1 的整数', false);
+};
+$('scheduleCloseBtn').onclick = () => {
+  $('scheduleCard').hidden = true;
+  state.schedule = { analysisId: null, analysisName: '', resources: [], plan: null };
+};
 
 // ---------- 启动 ----------
 (async function init() {

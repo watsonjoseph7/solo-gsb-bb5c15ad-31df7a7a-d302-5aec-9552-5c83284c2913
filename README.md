@@ -10,6 +10,7 @@
 - **共享资源冲突检测**：时间重叠且 `resources` 存在交集即判定资源冲突；与空间冲突同时成立时合并为一条 `both` 记录，避免重复计数
 - **冲突协调集群**：每次分析后，以区域为节点、冲突为无向边（同一对区域即使存在多类型冲突也只产生一条边），按连通分量生成仅含两个及以上区域的集群；用 **Tarjan 割点算法**识别关键区域（移除后集群会分裂）。每个集群返回区域/冲突 ID、冲突类型计数、累计重叠天数与关键区域列表，集群按冲突数降序、最小区域 ID 稳定排序
 - **结果筛选与建议**：按冲突类型（空间 / 资源 / 空间+资源）筛选结果列表；点击集群卡片可联动过滤冲突列表与地图，关键区域在地图上以金色虚线 + 菱形标记独立呈现，可一键恢复全量视图；每处冲突给出"顺延 / 提前 / 工序穿插"建议，涉及共享资源时额外给出"资源错峰 / 分时复用 / 增配资源"建议（含具体调整日期与天数）
+- **共享资源错峰排程**：在已保存分析中选择一种共享资源并设置可用数量（默认 1），系统按各区域原定工期与该资源的重叠关系做**不超容量的连续安排**（贪心列表调度：工期不变、只准延后、按时序把每个区域放到最早可行开工点）。输出每个参与区域的建议起止日期、延后天数与受影响冲突；容量 > 1 时允许部分冲突在容量内并行（标注排程后重叠）。结果页可按资源查看（时间轴 + 明细表）并**导出排程 JSON**。排程为纯计算结果，**不修改原区域或分析结果、不落库**；该资源无相关冲突时返回空计划
 - **分析对比**：选择任意两条已保存分析，服务端**按区域对（zone pair）匹配冲突**（不依赖 `conflict-N` 编号——编号会随冲突增减与面积排序漂移），输出四类结果：**新增**（基线无、对照有）、**已解决**（基线有、对照无）、**持续且属性变化**、**持续且属性未变**；属性变化逐字段标注冲突类型、重叠起止/天数、共享资源（新增/移除的资源名），并保留两侧完整冲突详情。要求两条分析基于**同一区域集合**（参与分析的区域随结果保存为 `zoneSummaries`），新增/删除区域、重新导入（uuid 变化）或筛选区域不同都会以可理解的错误信息拒绝并列出差异区域
 - **图层筛选**：按 `properties.layer` 勾选参与分析的图层，可限定分析时段（重叠期自动按时段裁剪）
 - **地图可视化**：Leaflet 地图展示各区域（按图层着色）与按冲突类型着色的相交区域，点击结果可定位（纯资源冲突无相交几何，不上图）
@@ -44,6 +45,7 @@ npm start
    - **再次点击同一卡片**或点击右上角「**恢复全量视图**」：取消过滤
 5. 在「已保存分析」输入名称后点「**保存当前分析**」，之后可随时「查看」复现（含集群选择视图所需的全部摘要）或「导出」GeoJSON 报告
 6. 在「**分析对比**」分别选择基线与对照两条已保存分析（默认按保存时间自动选择最早/最晚两条），点击「**开始对比**」：结果区以分类页签展示新增 / 已解决 / 持续（可单独筛出属性变化）数量与明细；持续冲突逐条列出冲突类型、重叠起止/天数、共享资源的前后差异，展开可见两侧完整冲突详情。若两条分析的区域集合不同，会在对比面板直接提示差异区域名称，需基于同一批区域重新保存后再对比
+7. 在「已保存分析」中点击某条分析的「**排程**」：结果区展开「**共享资源错峰排程**」面板，选择共享资源（默认取冲突最多的资源）与可用数量（默认 1），点击「**生成排程**」查看每区域建议起止、延后天数、受影响冲突（已错开 / 容量内并行）与时间轴；点击「**导出排程 JSON**」下载完整排程文件。切换资源或修改数量会自动重新生成
 
 ### 导入流程（预检 → 确认 → 写入）
 
@@ -152,6 +154,42 @@ npm test
 | 分析结果数据损坏（无 `conflicts` 列表） | 400 | 指出是哪条分析数据不完整 |
 | 区域集合不同 | 422 | `code: "ZONE_SET_MISMATCH"`，`zonesOnlyInBefore` / `zonesOnlyInAfter` 给出仅单侧存在的区域 id，错误信息中附带区域名称（各列前 5 个） |
 
+## 共享资源错峰排程输出字段
+
+`POST /api/analyses/:id/schedule`（body `{resource, capacity?}`，`capacity` 默认 1）基于已保存分析的冲突结果生成排程，返回：
+
+| 字段 | 说明 |
+| --- | --- |
+| `analysisId` / `analysisName` / `resource` / `capacity` / `generatedAt` | 排程输入摘要（容量缺省取 1） |
+| `empty` | 该资源是否无相关冲突；为 `true` 时 `zones` / `conflicts` 均为空数组（**空计划**） |
+| `zoneCount` / `scheduledZoneCount` / `delayedZoneCount` | 参与排程区域数 / 已排区域数 / 被顺延区域数 |
+| `zones[]` | 每个参与区域的建议安排，见下表 |
+| `conflicts[]` | 受影响冲突（冲突记录中 `sharedResources` 命中所选资源者）及排程后状态 |
+| `summary` | `{affectedConflictCount, resolvedConflictCount, remainingConflictCount, delayedZoneCount, maxDelayDays, totalDelayDays}` |
+
+`zones[]` 每项：
+
+| 字段 | 说明 |
+| --- | --- |
+| `zoneId` / `zoneName` / `layer` | 区域标识 |
+| `originalStart` / `originalEnd` / `durationDays` | 原定起止与工期（天数，保留一位小数） |
+| `scheduledStart` / `scheduledEnd` | 建议起止；**工期保持不变**（连续安排，不拆分、不压缩），仅可能整体后移 |
+| `delayDays` | 延后天数（`scheduledStart - originalStart`；未顺延为 0） |
+| `affectedConflictCount` / `resolvedConflictCount` | 该区域受影响冲突数 / 其中排程后已错开的数量 |
+| `affectedConflicts[]` | 逐条受影响冲突：`{conflictId, conflictType, otherZone, overlapStart/End/Days, resolvedAfterSchedule, scheduledOverlap}`；容量内仍重叠时 `scheduledOverlap` 给出排程后重叠 `{start,end,days}`，否则为 `null` |
+
+调度规则：仅纳入与所选资源存在资源冲突（`resource` / `both`）的区域，每个区域在其原定工期内持续占用 1 个单位；按原定开工时间升序（完工时间、区域 id 兜底）依次放置到最早可行开工点，使其工期内该资源并发占用不超过 `capacity`（半开区间，完工即释放）。容量 1 时全部冲突串行解除；容量 > 1 时允许并发不超容量的冲突保留（`resolvedAfterSchedule:false`）。排程全程**只读**：不写回区域库、不修改已保存分析结果，也不落库保存计划；导出为即时生成的 JSON 附件。
+
+### 排程错误响应
+
+| 场景 | 状态码 | 说明 |
+| --- | --- | --- |
+| 分析不存在（或已删除） | 404 | `分析不存在` |
+| 未选 / 传空 `resource` | 400 | `请选择一种共享资源` |
+| `capacity` 非整数、小于 1 或非数字 | 400 | `资源可用数量必须为不小于 1 的整数` |
+| 分析结果数据损坏（无 `conflicts` 列表） | 400 | 指出分析结果数据不完整 |
+| 资源在该分析中无相关冲突 | 200 | 正常返回空计划（`empty:true`），不报错 |
+
 ## API 一览
 
 | 方法 | 路径 | 说明 |
@@ -170,6 +208,9 @@ npm test
 | GET | `/api/analyses/:id` | 分析详情 |
 | DELETE | `/api/analyses/:id` | 删除分析 |
 | POST | `/api/analyses/compare` | **分析对比**：body `{baselineId, comparisonId}`；按区域对匹配冲突，返回新增/已解决/持续（含逐字段属性变化）。同一条分析返回 400、分析不存在返回 404、区域集合不同返回 422（错误信息含仅单侧存在的区域） |
+| GET | `/api/analyses/:id/schedule/resources` | 列出该分析可排程的共享资源（至少一条资源冲突）：`{resource, conflictCount, zoneCount}[]`，按冲突数降序 |
+| POST | `/api/analyses/:id/schedule` | **共享资源错峰排程**：body `{resource, capacity?}`（容量默认 1）；返回每区域建议起止/延后天数/受影响冲突，不修改区域与分析；无相关冲突返回空计划 |
+| GET | `/api/analyses/:id/schedule/export?resource=&capacity=` | 导出排程 JSON（附件下载；按参数即时生成，不落库） |
 | GET | `/api/analyses/:id/export` | 导出 GeoJSON 报告（附件下载；`metadata.clusters` 含集群摘要，每个 Feature 的 `properties.clusterId` 关联集群） |
 
 ### 预检检查项与分级
@@ -197,17 +238,19 @@ npm test
 ├── src/
 │   ├── analysis.js      # 时空/资源冲突检测与错峰建议生成
 │   ├── compare.js       # 分析对比：按区域对匹配 + 新增/已解决/持续/属性变化分类
+│   ├── schedule.js      # 共享资源错峰排程：容量受限的连续列表调度（纯计算，不改原数据）
 │   ├── clusters.js      # 冲突协调集群：无向图连通分量 + Tarjan 割点（关键区域）
 │   ├── quality.js       # 导入质量预检与规范化（环/顶点/自相交/时间/资源，JSONPath 定位）
 │   ├── geo.js           # 局部投影与面积计算
 │   └── store.js         # JSON 文件持久化（区域 / 已保存分析）
-├── public/              # 前端（Leaflet 地图 + 集群卡片 + 分析面板 + 对比面板 + 预检结果页）
+├── public/              # 前端（Leaflet 地图 + 集群卡片 + 分析面板 + 对比面板 + 排程面板 + 预检结果页）
 │   ├── sample.geojson   # 示例数据（含 resources 字段）
 │   └── sample-issues.geojson # 问题示例（各类错误/警告）
 ├── test/analysis.test.js
 ├── test/clusters.test.js
 ├── test/quality.test.js
 ├── test/compare.test.js
+├── test/schedule.test.js
 ├── Dockerfile
 └── docker-compose.yml
 ```
