@@ -13,6 +13,9 @@ const state = {
   analyses: [],         // 已保存分析列表（对比选择器复用）
   lastComparison: null, // 最近一次分析对比结果
   compareCat: 'all',    // 对比结果分类筛选
+  scheduleResources: [], // 排程面板所选分析的可排资源
+  schedulePlans: new Map(), // 资源名 -> 最近一次排程结果（结果页按资源切换查看）
+  scheduleCapacity: 1,  // 结果页与表单共享的当前容量
 };
 
 // 冲突类型展示配置
@@ -682,6 +685,276 @@ async function refreshAnalyses() {
   }
 
   renderCompareSelectors();
+  renderScheduleAnalysisSelector();
+}
+
+// ---------- 共享资源错峰排程 ----------
+
+/** 排程面板的分析选择器：尽量保留已选，与对比面板共用同一份已保存分析列表 */
+function renderScheduleAnalysisSelector() {
+  const sel = $('scheduleAnalysis');
+  const prev = sel.value;
+  sel.innerHTML = '';
+  if (!state.analyses.length) {
+    const opt = document.createElement('option');
+    opt.value = '';
+    opt.textContent = '暂无已保存分析';
+    sel.appendChild(opt);
+    sel.disabled = true;
+    $('scheduleBtn').disabled = true;
+    renderScheduleResourceSelector([]);
+    return;
+  }
+  sel.disabled = false;
+  $('scheduleBtn').disabled = false;
+  for (const a of state.analyses) {
+    const opt = document.createElement('option');
+    opt.value = a.id;
+    opt.textContent = analysisOptionLabel(a);
+    sel.appendChild(opt);
+  }
+  sel.value = state.analyses.some((a) => a.id === prev) ? prev : state.analyses[0].id;
+  // 分析列表可能因删除/新增而变化：清空旧排程结果，避免展示错配到其他分析的数据
+  state.schedulePlans.clear();
+  $('scheduleResultCard').hidden = true;
+  loadScheduleResources(sel.value);
+}
+
+/** 拉取所选分析中产生过冲突的共享资源并填充资源下拉 */
+async function loadScheduleResources(analysisId) {
+  if (!analysisId) {
+    renderScheduleResourceSelector([]);
+    return;
+  }
+  try {
+    const { resources } = await api(`/api/analyses/${analysisId}/resources`);
+    state.scheduleResources = resources;
+    renderScheduleResourceSelector(resources);
+  } catch {
+    state.scheduleResources = [];
+    renderScheduleResourceSelector([]);
+  }
+}
+
+function renderScheduleResourceSelector(resources) {
+  const sel = $('scheduleResource');
+  const prev = sel.value;
+  sel.innerHTML = '';
+  if (!resources.length) {
+    const opt = document.createElement('option');
+    opt.value = '';
+    opt.textContent = '该分析无共享资源冲突';
+    sel.appendChild(opt);
+    sel.disabled = true;
+    return;
+  }
+  sel.disabled = false;
+  for (const r of resources) {
+    const opt = document.createElement('option');
+    opt.value = r.resource;
+    opt.textContent = `${r.resource}（${r.conflictCount} 处冲突 · ${r.zoneCount} 个区域）`;
+    sel.appendChild(opt);
+  }
+  sel.value = resources.some((r) => r.resource === prev) ? prev : resources[0].resource;
+}
+
+async function runSchedule() {
+  const analysisId = $('scheduleAnalysis').value;
+  const resource = $('scheduleResource').value;
+  const capacity = Number($('scheduleCapacity').value);
+  const msg = $('scheduleMsg');
+  if (!analysisId) {
+    showMsg(msg, '请先选择一条已保存分析', false);
+    return;
+  }
+  if (!resource) {
+    showMsg(msg, '该分析中没有可排程的共享资源冲突', false);
+    return;
+  }
+  if (!Number.isInteger(capacity) || capacity < 1) {
+    showMsg(msg, '资源可用数量必须为不小于 1 的整数', false);
+    return;
+  }
+  try {
+    const result = await api(`/api/analyses/${analysisId}/schedule`, {
+      method: 'POST',
+      body: JSON.stringify({ resource, capacity }),
+    });
+    state.schedulePlans.set(resource, result);
+    state.scheduleCapacity = capacity;
+    msg.textContent = '';
+    msg.className = 'msg';
+    renderScheduleResult(resource);
+  } catch (err) {
+    showMsg(msg, err.message, false);
+  }
+}
+
+/** 结果页：按资源查看（切换时复用已生成结果；未生成过的资源即时请求） */
+async function showScheduleResource(resource) {
+  if (!resource) return;
+  if (state.schedulePlans.has(resource)) {
+    renderScheduleResult(resource);
+    return;
+  }
+  const analysisId = $('scheduleAnalysis').value;
+  try {
+    const result = await api(`/api/analyses/${analysisId}/schedule`, {
+      method: 'POST',
+      body: JSON.stringify({ resource, capacity: state.scheduleCapacity || 1 }),
+    });
+    state.schedulePlans.set(resource, result);
+    renderScheduleResult(resource);
+  } catch (err) {
+    alert(`排程加载失败：${err.message}`);
+  }
+}
+
+function renderScheduleResult(resource) {
+  const sched = state.schedulePlans.get(resource);
+  if (!sched) return;
+  const card = $('scheduleResultCard');
+  card.hidden = false;
+
+  // 顶部“按资源查看”下拉（基于当前分析的可排资源）
+  const viewSel = $('scheduleViewResource');
+  viewSel.innerHTML = '';
+  for (const r of state.scheduleResources) {
+    const opt = document.createElement('option');
+    opt.value = r.resource;
+    opt.textContent = r.resource;
+    viewSel.appendChild(opt);
+  }
+  viewSel.value = resource;
+
+  $('scheduleSummary').textContent = sched.empty
+    ? '空计划'
+    : `${sched.zoneCount} 个区域 · 容量 ${sched.capacity}`;
+  $('scheduleMeta').innerHTML =
+    `分析：<strong>${escapeHtml(sched.analysis.name || '-')}</strong>` +
+    ` · 资源：<strong>${escapeHtml(sched.resource)}</strong> · 可用数量 <strong>${sched.capacity}</strong>` +
+    (sched.empty
+      ? ''
+      : ` · 顺延 ${sched.delayedCount}/${sched.zoneCount} 个区域（最多 ${sched.maxDelayDays} 天，合计 ${sched.totalDelayDays} 天）` +
+        ` · 冲突消除 ${sched.resolvedCount}/${sched.conflictCount}` +
+        (sched.remainingCount ? ` · <span class="sched-remain">仍重叠 ${sched.remainingCount} 处</span>` : ''));
+
+  renderScheduleTimeline(sched);
+  renderSchedulePlan(sched);
+  renderScheduleConflicts(sched);
+}
+
+/** 轻量甘特条：灰条为原定工期，橙条为建议工期（顺延部分一眼可见） */
+function renderScheduleTimeline(sched) {
+  const box = $('scheduleTimeline');
+  box.innerHTML = '';
+  if (sched.empty) {
+    box.innerHTML = `<em class="sched-empty">${escapeHtml(sched.message)}</em>`;
+    return;
+  }
+  const all = sched.plan.flatMap((p) => [Date.parse(p.originalStart), Date.parse(p.suggestedEnd)]);
+  const min = Math.min(...all);
+  const max = Math.max(...all);
+  const span = Math.max(max - min, 1);
+
+  for (const p of sched.plan) {
+    const row = document.createElement('div');
+    row.className = 'sched-row';
+    const label = document.createElement('span');
+    label.className = 'sched-row-label';
+    label.textContent = p.zoneName;
+    label.title = `${p.originalStart.slice(0, 10)} ~ ${p.originalEnd.slice(0, 10)}`;
+    const track = document.createElement('div');
+    track.className = 'sched-track';
+    const orig = document.createElement('div');
+    orig.className = 'sched-bar orig';
+    orig.style.left = `${((Date.parse(p.originalStart) - min) / span) * 100}%`;
+    orig.style.width = `${((Date.parse(p.originalEnd) - Date.parse(p.originalStart)) / span) * 100}%`;
+    const sug = document.createElement('div');
+    sug.className = 'sched-bar suggested' + (p.delayDays > 0 ? ' delayed' : '');
+    sug.style.left = `${((Date.parse(p.suggestedStart) - min) / span) * 100}%`;
+    sug.style.width = `${((Date.parse(p.suggestedEnd) - Date.parse(p.suggestedStart)) / span) * 100}%`;
+    sug.title = `建议 ${fmtDate(p.suggestedStart)} ~ ${fmtDate(p.suggestedEnd)}（延后 ${p.delayDays} 天）`;
+    track.append(orig, sug);
+    row.append(label, track);
+    box.appendChild(row);
+  }
+  const axis = document.createElement('div');
+  axis.className = 'sched-axis';
+  axis.innerHTML = `<span>${fmtDate(new Date(min).toISOString())}</span><span>${fmtDate(new Date(max).toISOString())}</span>`;
+  box.appendChild(axis);
+}
+
+function renderSchedulePlan(sched) {
+  const box = $('schedulePlan');
+  box.innerHTML = '';
+  $('schedulePlanCount').textContent = sched.plan.length;
+  if (sched.empty) {
+    box.innerHTML = '<em class="sched-empty">无需调整任何区域。</em>';
+    return;
+  }
+  for (const p of sched.plan) {
+    const item = document.createElement('div');
+    item.className = 'sched-item' + (p.delayDays > 0 ? ' delayed' : '');
+    const refs = p.affectedConflictIds
+      .map((id) => `<span class="tag cluster-tag">${escapeHtml(id)}</span>`)
+      .join(' ');
+    item.innerHTML = `
+      <div class="sched-item-head">
+        <strong>${escapeHtml(p.zoneName)}</strong>
+        <span class="tag" style="background:#eef3f8">${escapeHtml(p.layer || '-')}</span>
+        <span class="sched-delay ${p.delayDays > 0 ? 'yes' : 'no'}">${p.delayDays > 0 ? `延后 ${p.delayDays} 天` : '无需延后'}</span>
+      </div>
+      <div class="sched-dates">
+        <span class="sched-date-orig">原定 ${fmtDate(p.originalStart)} ~ ${fmtDate(p.originalEnd)}</span>
+        <span class="sched-arrow">➜</span>
+        <span class="sched-date-new">建议 ${fmtDate(p.suggestedStart)} ~ ${fmtDate(p.suggestedEnd)}（${p.durationDays} 天）</span>
+      </div>
+      <div class="sched-refs">受影响冲突：${refs || '无'}</div>`;
+    box.appendChild(item);
+  }
+}
+
+function renderScheduleConflicts(sched) {
+  const box = $('scheduleConflicts');
+  box.innerHTML = '';
+  $('scheduleConflictCount').textContent = sched.affectedConflicts.length;
+  if (sched.empty) {
+    box.innerHTML = '<em class="sched-empty">没有受影响的冲突。</em>';
+    return;
+  }
+  for (const c of sched.affectedConflicts) {
+    const item = document.createElement('div');
+    item.className = 'sched-conflict ' + (c.remaining ? 'remaining' : 'resolved');
+    const zones = c.zones
+      .map((z) => `<span class="tag">${escapeHtml(z.name)}</span>`)
+      .join(' <span class="pair-x">×</span> ');
+    const resources = (c.sharedResources || []).map((r) => `<span class="tag resource">${escapeHtml(r)}</span>`).join(' ');
+    const status = c.remaining
+      ? '<span class="sched-status remain">容量内仍时间重叠</span>'
+      : '<span class="sched-status ok">✓ 排程后已错开</span>';
+    item.innerHTML = `
+      <div class="sched-conflict-head">
+        <span class="tag cluster-tag">${escapeHtml(c.conflictId)}</span>
+        ${zones} ${status}
+      </div>
+      <div class="meta">原重叠期：${fmtDate(c.overlapStart)} ~ ${fmtDate(c.overlapEnd)}（${c.overlapDays ?? '-'} 天） · 共享资源：${resources}</div>`;
+    box.appendChild(item);
+  }
+}
+
+function exportSchedule() {
+  const viewSel = $('scheduleViewResource');
+  const resource = viewSel.value;
+  const sched = state.schedulePlans.get(resource);
+  if (!sched) return;
+  const analysisId = $('scheduleAnalysis').value;
+  // 走导出接口即时重算，保证下载内容与服务端口径一致
+  const params = new URLSearchParams({
+    resource,
+    capacity: String(sched.capacity),
+  });
+  window.location.href = `/api/analyses/${analysisId}/schedule/export?${params.toString()}`;
 }
 
 // ---------- 分析对比 ----------
@@ -1001,6 +1274,16 @@ document.querySelectorAll('#compareTabs .compare-tab').forEach((btn) => {
     if (state.lastComparison) renderComparison(state.lastComparison);
   };
 });
+
+// 共享资源错峰排程
+$('scheduleAnalysis').onchange = (e) => {
+  state.schedulePlans.clear();
+  $('scheduleResultCard').hidden = true;
+  loadScheduleResources(e.target.value);
+};
+$('scheduleBtn').onclick = runSchedule;
+$('scheduleViewResource').onchange = (e) => showScheduleResource(e.target.value);
+$('scheduleExportBtn').onclick = exportSchedule;
 
 // ---------- 启动 ----------
 (async function init() {

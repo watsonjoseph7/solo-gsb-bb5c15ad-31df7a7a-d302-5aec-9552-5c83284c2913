@@ -6,6 +6,7 @@ const express = require('express');
 const { analyze, normalizeZone } = require('./src/analysis');
 const { precheck, extractFeatures } = require('./src/quality');
 const { compareAnalyses, ComparisonError } = require('./src/compare');
+const { buildResourceSchedule, listSharedResources, SchedulingError } = require('./src/scheduling');
 const store = require('./src/store');
 
 const app = express();
@@ -205,6 +206,55 @@ app.post('/api/analyses/compare', (req, res) => {
         zonesOnlyInBefore: err.zonesOnlyInBefore,
         zonesOnlyInAfter: err.zonesOnlyInAfter,
       });
+    }
+    return res.status(400).json({ error: err.message });
+  }
+});
+
+// ---- 共享资源错峰排程（基于已保存分析，只生成建议，不改动原区域或分析结果）----
+
+// 列出一条已保存分析中产生过冲突的共享资源（含冲突数/涉及区域数），供排程选择
+app.get('/api/analyses/:id/resources', (req, res) => {
+  const record = store.getAnalysis(req.params.id);
+  if (!record) return res.status(404).json({ error: '分析不存在' });
+  res.json({ resources: listSharedResources(record.result) });
+});
+
+// 生成排程：body { resource, capacity? }；无相关冲突时返回空计划
+app.post('/api/analyses/:id/schedule', (req, res) => {
+  const record = store.getAnalysis(req.params.id);
+  if (!record) return res.status(404).json({ error: '分析不存在' });
+  try {
+    const body = req.body || {};
+    const schedule = buildResourceSchedule(record, {
+      resource: body.resource,
+      capacity: body.capacity,
+    });
+    res.json(schedule);
+  } catch (err) {
+    if (err instanceof SchedulingError) {
+      return res.status(err.status || 400).json({ error: err.message });
+    }
+    return res.status(400).json({ error: err.message });
+  }
+});
+
+// 导出排程 JSON（附件下载；服务端按相同参数即时重算，保证与页面结果一致）
+app.get('/api/analyses/:id/schedule/export', (req, res) => {
+  const record = store.getAnalysis(req.params.id);
+  if (!record) return res.status(404).json({ error: '分析不存在' });
+  try {
+    const schedule = buildResourceSchedule(record, {
+      resource: req.query.resource,
+      capacity: req.query.capacity,
+    });
+    const filename = encodeURIComponent(`resource-schedule-${schedule.resource}-${record.id}.json`);
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${filename}`);
+    res.send(JSON.stringify(schedule, null, 2));
+  } catch (err) {
+    if (err instanceof SchedulingError) {
+      return res.status(err.status || 400).json({ error: err.message });
     }
     return res.status(400).json({ error: err.message });
   }

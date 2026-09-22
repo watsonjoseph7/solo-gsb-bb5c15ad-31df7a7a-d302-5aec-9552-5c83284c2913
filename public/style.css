@@ -403,3 +403,113 @@ button.small { padding: 2px 8px; font-size: 12px; }
   line-height: 1.7;
   color: #444;
 }
+
+/* ---------- 共享资源错峰排程 ---------- */
+.sched-view-label { font-size: 12.5px; color: #34495e; }
+.sched-remain { color: #b33; font-weight: bold; }
+.sched-subhead { margin: 14px 0 8px; font-size: 13.5px; color: #1f3b57; }
+.sched-empty { color: #777; font-size: 13px; }
+
+/* 甘特时间线 */
+.sched-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin: 8px 0 4px;
+  padding: 10px 12px 4px;
+  background: #f8fafc;
+  border: 1px solid #e3e9f0;
+  border-radius: 6px;
+}
+.sched-row { display: flex; align-items: center; gap: 8px; }
+.sched-row-label {
+  width: 110px;
+  flex-shrink: 0;
+  font-size: 12px;
+  color: #34495e;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sched-track { position: relative; flex: 1; height: 20px; }
+.sched-bar {
+  position: absolute;
+  top: 0;
+  height: 18px;
+  border-radius: 3px;
+  min-width: 2px;
+}
+.sched-bar.orig {
+  top: 2px;
+  height: 14px;
+  background: #d9dee4;
+  border: 1px solid #b8c0c9;
+}
+.sched-bar.suggested {
+  background: #ffe8cc;
+  border: 1px solid #e8590c;
+}
+.sched-bar.suggested.delayed {
+  background: #ffd8a8;
+  border-color: #d9480f;
+  box-shadow: 0 0 0 1px rgba(217, 72, 15, 0.25);
+}
+.sched-axis {
+  display: flex;
+  justify-content: space-between;
+  margin: 2px 0 4px 118px;
+  font-size: 11px;
+  color: #889;
+}
+
+/* 区域安排条目 */
+.sched-plan { display: flex; flex-direction: column; gap: 8px; }
+.sched-item {
+  border: 1px solid #e0e0e0;
+  border-left: 4px solid #adb5bd;
+  border-radius: 6px;
+  padding: 8px 12px;
+  font-size: 13px;
+  background: #fafbfc;
+}
+.sched-item.delayed {
+  border-left-color: #e8590c;
+  background: #fffaf5;
+}
+.sched-item-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 4px; }
+.sched-delay {
+  margin-left: auto;
+  font-size: 12px;
+  border-radius: 4px;
+  padding: 1px 8px;
+  white-space: nowrap;
+}
+.sched-delay.yes { background: #ffe8cc; color: #a04e00; border: 1px solid #f5b26b; }
+.sched-delay.no { background: #e6f4ea; color: #1a7f37; border: 1px solid #b8dcc2; }
+.sched-dates { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; color: #444; }
+.sched-date-orig { color: #777; }
+.sched-arrow { color: #99a; }
+.sched-date-new { font-weight: bold; color: #1f3b57; }
+.sched-refs { margin-top: 4px; font-size: 12px; color: #777; }
+
+/* 受影响冲突 */
+.sched-conflicts { display: flex; flex-direction: column; gap: 8px; }
+.sched-conflict {
+  border: 1px solid #e0e0e0;
+  border-left: 4px solid #999;
+  border-radius: 6px;
+  padding: 7px 12px;
+  font-size: 13px;
+}
+.sched-conflict.resolved { border-left-color: #1a7f37; background: #f7fdf9; }
+.sched-conflict.remaining { border-left-color: #d0000b; background: #fffafa; }
+.sched-conflict-head { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-bottom: 3px; }
+.sched-status {
+  margin-left: auto;
+  font-size: 11.5px;
+  border-radius: 4px;
+  padding: 1px 8px;
+  white-space: nowrap;
+}
+.sched-status.ok { background: #e6f4ea; color: #1a7f37; border: 1px solid #b8dcc2; }
+.sched-status.remain { background: #fde8e8; color: #b33; border: 1px solid #f0b4b4; }

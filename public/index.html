@@ -73,6 +73,28 @@
         </div>
         <p id="compareMsg" class="msg"></p>
       </section>
+
+      <section class="card" id="scheduleCard">
+        <h2>6. 共享资源错峰排程</h2>
+        <p class="cluster-hint">在已保存分析中选择一种共享资源并设置可用数量（默认 1），按区域原定工期生成不超容量的连续安排。排程仅为建议，不会修改原区域或分析结果；无相关冲突时返回空计划。</p>
+        <div class="row">
+          <label>已保存分析
+            <select id="scheduleAnalysis"></select>
+          </label>
+        </div>
+        <div class="row">
+          <label>共享资源
+            <select id="scheduleResource"></select>
+          </label>
+        </div>
+        <div class="row">
+          <label>可用数量
+            <input type="number" id="scheduleCapacity" min="1" step="1" value="1" style="width:80px" />
+          </label>
+          <button id="scheduleBtn" class="primary" type="button">生成排程</button>
+        </div>
+        <p id="scheduleMsg" class="msg"></p>
+      </section>
     </aside>
 
     <!-- 右侧：地图 + 结果 -->
@@ -115,6 +137,24 @@
           <button type="button" class="compare-tab changed" data-cat="changed">⚠ 属性变化 <span class="tab-count" data-count="changed">0</span></button>
         </div>
         <div id="compareList" class="compare-list"></div>
+      </section>
+
+      <section class="card" id="scheduleResultCard" hidden>
+        <div class="cluster-head">
+          <h2>共享资源错峰排程 <span id="scheduleSummary" class="badge"></span></h2>
+          <span class="row" style="margin:0;gap:6px">
+            <label class="sched-view-label">按资源查看
+              <select id="scheduleViewResource"></select>
+            </label>
+            <button id="scheduleExportBtn" class="small" type="button">导出排程 JSON</button>
+          </span>
+        </div>
+        <p id="scheduleMeta" class="cluster-hint"></p>
+        <div id="scheduleTimeline" class="sched-timeline"></div>
+        <h3 class="sched-subhead">区域建议安排 <span id="schedulePlanCount" class="badge"></span></h3>
+        <div id="schedulePlan" class="sched-plan"></div>
+        <h3 class="sched-subhead">受影响冲突 <span id="scheduleConflictCount" class="badge"></span></h3>
+        <div id="scheduleConflicts" class="sched-conflicts"></div>
       </section>
     </section>
   </main>
